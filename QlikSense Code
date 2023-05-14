@@ -1,0 +1,140 @@
+Mapping:
+
+Stations:
+LOAD
+    id,
+    name,
+    latitude,
+    longitude,
+    dpcapacity
+FROM [lib://trips/Divvy_Stations_*.csv]
+(txt, codepage is 28591, embedded labels, delimiter is ',', msq);
+
+
+StationCapacity:
+Mapping
+load StationID, Capacity;
+load Distinct id as StationID,
+    name as StationName,
+//     city as StationCity,
+//     latitude as Lat,
+//     longitude as Long,
+    GeoMakePoint(latitude, longitude)  as StationGeoPoint,
+    dpcapacity as Capacity
+//     online_date as OpenedOn
+ resident Stations;
+ 
+StationLocation:
+Mapping
+load StationID, StationGeoPoint;
+ load Distinct id as StationID,
+    name as StationName,
+//     city as StationCity,
+//     latitude as Lat,
+//     longitude as Long,
+    GeoMakePoint(latitude, longitude)  as StationGeoPoint,
+    dpcapacity as Capacity
+//     online_date as OpenedOn
+ resident Stations;
+ 
+
+drop table Stations;
+
+Fact:
+TripsData:
+LOAD
+    ride_id,
+    rideable_type,
+    started_at,
+    ended_at,
+    start_station_name,
+    start_station_id,
+    end_station_name,
+    end_station_id,
+    start_lat,
+    start_lng,
+    end_lat,
+    end_lng,
+    member_casual
+FROM [lib://trips/*-divvy-tripdata.csv]
+(txt, codepage is 28591, embedded labels, delimiter is ',', msq);
+
+
+NoConcatenate
+Fact:
+load *,
+if([Distancekm] >0  and [Distancekm]<1, '1KM',
+if([Distancekm] >1  and [Distancekm]<2, '2KM',
+if([Distancekm] >2  and [Distancekm]<3, '3KM',
+if([Distancekm] >3  and [Distancekm]<4, '4KM',
+if([Distancekm] >4  and [Distancekm]<5, '5KM',
+if([Distancekm] >5  and [Distancekm]<10, '10KM',
+if([Distancekm] >10 and [Distancekm]<20, '20KM',
+if([Distancekm] >20 and [Distancekm]<30, '30KM',
+if([Distancekm] >30 and [Distancekm]<40, '40KM',
+if([Distancekm] >40 and [Distancekm]<50, '50KM',
+if([Distancekm] >50 , '50+ KM'))))))))))) as DistanceTange,
+if([Distancekm] >0,1,0) as DistanceFlag;
+load *, fAbs( Interval(ended_at - started_at)) as TimeDiff,
+if( [Latitude]>0 and [Dest Latitude]>0, 
+ACOS(SIN([Latitude]*Pi()/180)*  SIN([Dest Latitude]*Pi()/180)+  COS([Latitude]*Pi()/180)*  COS([Dest Latitude]*Pi()/180)*  COS(([Dest Longitude]*Pi()/180)-  ([Longitude]*Pi()/180)))*6371 ,0)as [Distancekm],
+if(start_station_id>0 and end_station_id>0 ,1,0) as ValidRoutes,
+if(start_station_id>0 and end_station_id>0 ,start_station_name&' - '&end_station_name ,null()) as RouteStack
+;
+load 
+ ride_id,
+ start_station_id,
+ end_station_id,
+    
+    capitalize( SubField(rideable_type,'_',1)) as rideable_type,
+    started_at,
+    ended_at,
+    weekday(started_at) as StartWeekDay,
+    hour(started_at) as StartHour,
+    if(start_station_id>0, capitalize(start_station_name),null()) as start_station_name ,
+    ApplyMap('StationCapacity',start_station_id,null()) as BeginStationCapacity,
+//     end_station_name,
+    if(end_station_id>0, capitalize(end_station_name),null()) as end_station_name ,
+    ApplyMap('StationCapacity',end_station_id,null()) as EndStationCapacity,
+    start_lat as [Latitude],
+    start_lng as [Longitude],
+    end_lat as [Dest Latitude],
+    end_lng as [Dest Longitude],
+    GeoMakePoint(start_lat, start_lng)  as StartGeoPoint,
+    GeoMakePoint(end_lat, end_lng)  as EndGeoPoint,
+    capitalize(member_casual) as member_casual
+Resident TripsData;
+
+drop table TripsData;
+
+
+Auto Generated Calender:
+[autoCalendar]:
+DECLARE FIELD DEFINITION Tagged ('$date')
+FIELDS
+Dual(Year($1), YearStart($1)) AS [Year] Tagged ('$axis', '$year'),
+Dual('Q'&Num(Ceil(Num(Month($1))/3)),Num(Ceil(NUM(Month($1))/3),00)) AS [Quarter] Tagged ('$quarter', '$cyclic'),
+Dual(Year($1)&'-Q'&Num(Ceil(Num(Month($1))/3)),QuarterStart($1)) AS [YearQuarter] Tagged ('$yearquarter', '$qualified'),
+Dual('Q'&Num(Ceil(Num(Month($1))/3)),QuarterStart($1)) AS [_YearQuarter] Tagged ('$yearquarter', '$hidden', '$simplified'),
+Month($1) AS [Month] Tagged ('$month', '$cyclic'),
+Dual(Year($1)&'-'&Month($1), monthstart($1)) AS [YearMonth] Tagged ('$axis', '$yearmonth', '$qualified'),
+Dual(Month($1), monthstart($1)) AS [_YearMonth] Tagged ('$axis', '$yearmonth', '$simplified', '$hidden'),
+Dual('W'&Num(Week($1),00), Num(Week($1),00)) AS [Week] Tagged ('$weeknumber', '$cyclic'),
+
+Dual(Year($1) & '-' & Num(Week($1),00),WeekStart($1)) AS [YearWeek],
+
+Date(Floor($1)) AS [Date] Tagged ('$axis', '$date', '$qualified'),
+Date(Floor($1), 'D') AS [_Date] Tagged ('$axis', '$date', '$hidden', '$simplified'),
+If (DayNumberOfYear($1) <= DayNumberOfYear(Today()), 1, 0) AS [InYTD] ,
+Year(Today())-Year($1) AS [YearsAgo] ,
+If (DayNumberOfQuarter($1) <= DayNumberOfQuarter(Today()),1,0) AS [InQTD] ,
+4*Year(Today())+Ceil(Month(Today())/3)-4*Year($1)-Ceil(Month($1)/3) AS [QuartersAgo] ,
+Ceil(Month(Today())/3)-Ceil(Month($1)/3) AS [QuarterRelNo] ,
+If(Day($1)<=Day(Today()),1,0) AS [InMTD] ,
+12*Year(Today())+Month(Today())-12*Year($1)-Month($1) AS [MonthsAgo] ,
+Month(Today())-Month($1) AS [MonthRelNo] ,
+If(WeekDay($1)<=WeekDay(Today()),1,0) AS [InWTD] ,
+(WeekStart(Today())-WeekStart($1))/7 AS [WeeksAgo] ,
+Week(Today())-Week($1) AS [WeekRelNo] ;
+
+DERIVE FIELDS FROM FIELDS  started_at, ended_at, OpenedOn USING [autoCalendar] ;
